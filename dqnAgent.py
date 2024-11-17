@@ -1,52 +1,62 @@
 import gymnasium as gym
 import random
 
-import numpy
-import model
+import numpy as np
+import dqnModel
 import torch.nn as nn
 import torch.optim as optim
 import torch
+from minesweeper import Game
+from dqnModel import DQNTrainer
+from dqnModel import DQN
+import matplotlib.pyplot as plt
+
+memory_size = 100
+batch_size = 8
 gamma = 0.94
 epsilon_decay_limit = 3000
-lr = 0.14
+lr = 0.00014
 step = []
 save_round = 10
+board_width = 6
+board_height = 6
+mines = 2
+#initialize game
+game = Game(board_width,board_height,mines)
+DQN = DQN(game.board_size,game.board_size)
+Trainer = DQNTrainer(gamma, DQN, optim.Adam(DQN.parameters(), lr), nn.MSELoss(), batch_size, memory_size)
 
-DQN = model.DQN(2,1)
-r_m = "human"
 
-Trainer = model.Trainer(gamma, DQN, optim.Adam(DQN.parameters(), lr), nn.MSELoss(), 200, 10000)
-#render_mode = "human" display the gameplay
-env = gym.make("MountainCarContinuous-v0", render_mode = None)#apply_api_compatibility=True, render_mode="human"
-#env = JoypadSpace(env, SIMPLE_MOVEMENT)
+def x_y_transform( output_neuron_pos):
+     x = output_neuron_pos % board_height
+     y = output_neuron_pos % board_width
 
-
-#display the action space
-#print("action space: " + str(env.action_space))
-
-#display observation space
-#print("observation space:" + str(env.observation_space))
+     return x, y
 
 
 total_step = 0
 current_obs = torch.tensor
-max_step_per_round = 2000
-total_rounds = 300
+total_rounds = 5000
+reward = 0
+done = True
+state = 0
+action = 0
+best_score = 0
 #play for 50 rounds of games
-for round in range(total_rounds):
-    if(round % 50 == 0): r_m = "human"
-    else: r_m = None
-    env = gym.make("MountainCarContinuous-v0", render_mode = r_m)
+score_history = np.array([])
+game_state_history = np.array([])
+for round in range(total_rounds): 
+
     #reset the game, as well as get the initial observation space of the game
-    current_obs = env.reset()
-    #somehow the env.reset returns a tuple of 3 elements, only the first one is an array
-    #print(current_obs) to see the tuple
-    current_obs = current_obs[0]
+    current_obs = game.randomize_board()
 
-   
-
-    #max step per round is 999
-    for step in range(max_step_per_round):      
+    #set score
+    score = 0
+    
+    for x in range(3):
+        current_obs = game.reset_board()
+        #max step is the board size + 10 for redundancy
+        for step in range(999):      
             #print(step)
             total_step += 1
 
@@ -57,46 +67,82 @@ for round in range(total_rounds):
             epsilon = random.random() - total_step/epsilon_decay_limit
             
             if(epsilon >= 0): 
-              
-                 action = env.action_space.sample()   #random action
-                 #print('random action\n' + 'action' + str(action))
+
+                #print('random action')
+                next_obs, action, reward, done = game.random_action()   #random action
+                action_matrix = torch.zeros(game.board_size).to(torch.float32)
+                action_matrix[action] = 1.0
 
             else: 
-              
-                obs_tensor = torch.from_numpy(current_obs)
+                #print('pass through network')
+                state_value = DQN(current_obs)
+                action = torch.argmax(state_value)
+                x, y = x_y_transform(action)
+                action_matrix = torch.zeros(game.board_size).to(torch.float32)
+                action_matrix[action] = 1.0
+                next_obs, reward, done = game.action(x, y)
                 
-                action_tensor = DQN(obs_tensor)              #feed it to the model
-                action = action_tensor.detach().numpy()
-                #print('use neural network'+'action' + str(action))
              
             #step to get the necessary things for the training
-            next_obs, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
-            Trainer.record_situation(current_obs, action, reward, next_obs, done)
+            Trainer.record_situation(current_obs, action_matrix, reward, next_obs, done)
             
-
-            #restart the game if the game is terminated(win or lose) or truncated(game in a stall)
-            Trainer.train(current_obs, reward, next_obs , done)
-            
-            #depend on whether the action is different from the Q value of state, 
-            #state might be required for the training input
-            #as in train(state, action, reward, obs, done)
-            
-            #current_obs = torch.from_numpy(next_obs)
+            #update current observation for the next round of training
             current_obs = next_obs
-            #if it's done, it means can't play the game anymore, need to reset
+
+            #update the score for the current step
+            score += reward
+
+
+            #game.printGame()
+
+            # if this round is finished, then start the batch training from the memory
             if done:
+                score_history = np.append( score_history, [score])
+                avg_score = np.mean(score_history[-100:])
+
+                if avg_score > best_score:
+                     best_score = avg_score
+                     #Trainer.save_model()
+                
+                board_state = game.board_state()
+                if(board_state == "Won"):
+                     game_state_history = np.append(game_state_history,[1])
+                elif(board_state == "Lost"):
+                     game_state_history = np.append(game_state_history,[2])
+                else: 
+                     game_state_history = np.append(game_state_history,[3])
+
+                print('played for ' + str(round) + ' round of games,'
+                      +' this round played for ' + str(game.total_step) + ' steps. '
+                      + 'The game is ' + str(board_state))     
+                total_step = 0
                 Trainer.batch_train()
                 #record how many step in this round of play, for plotting
                 
                 break
+     
             
-    #save model on this certain round        
-    #if round == save_round: Trainer.save_model() 
+#print graph
+
+
+print(score_history)
+print(range(1, len(score_history)))   
+print("accuracy for the last 100 samples: " + str( np.count_nonzero(score_history[-100:] == 1) / len(score_history[-100: ])))
+
+
+plt.plot(range(1, len( score_history[-100:])+ 1), score_history[-100: ])
+
+plt.title('Data')
+
+# Label the x-axis
+plt.xlabel('Rounds')
+
+# Label the y-axis
+plt.ylabel('Scores')
+
+plt.show()
    
-    #debug message           
-    print('played for' + str(round) + 'of games, this round played for ' + str(total_step))         
-env.close()
+
 
 #print evaluation graph, number of steps taken
 
