@@ -28,15 +28,17 @@ number_of_mines = 2
 total_step = 0
 current_obs = torch.tensor
 max_step_per_round = 2000
-total_rounds = 300 #epochs
+total_rounds = 3000 #epochs
 
 score_history = np.array([])
 game_state_history = np.array([])
+best_score = 0
 
 game = Game(board_width, board_height, number_of_mines)
 actor = ActorNetwork(game.board_size, game.board_size, lr)
-critic = CriticNetwork(game.board_size, lr )
+critic = CriticNetwork(game.board_size, lr)
 Trainer = PPOTrainer(gamma, gae_lambda, actor, critic, n_epochs, lr, policy_clip)
+
 
 
 
@@ -46,17 +48,25 @@ for round in range(total_rounds):
 
     #reset the game, as well as get the initial observation space of the game
     current_obs = game.randomize_board()
-    score = 0
 
+    score = 0
+    
     #max step per round is 999
-    for step in range(max_step_per_round):      
+    for step in range(max_step_per_round):   
+            game.printGame()   
             #print(step)
             total_step += 1
-            print("current obs")
-            print(current_obs)
+           #print("current obs")
+            #print(current_obs)
             #get necessary info to store state with certain action
             action, prob, val = Trainer.get_action(current_obs)
-            next_obs, reward, done  = game.action(action)
+            print('current vals')
+            print(val)
+
+            #print('action')
+            x, y = game.x_y_transform(action)
+            
+            next_obs, reward, done  = game.action(x, y)
             score += reward
             
             #record the situation into the memory

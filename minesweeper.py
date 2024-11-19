@@ -35,6 +35,12 @@ class Game:
 
             return board
     
+    def x_y_transform(self, output_neuron_pos):
+     x = output_neuron_pos % self.height
+     y = output_neuron_pos % self.width
+
+     return x, y
+    
     def reset_board(self):
         self.board = self.board_copy
         board_tensor = self.board_to_tensor(self.board)

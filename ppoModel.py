@@ -13,23 +13,35 @@ from torch.distributions.categorical import Categorical
 class ActorNetwork(nn.Module):
     def __init__(self, input_state = 10, action_space = 7, alpha = 0.97, chkpt_dir = 'tmp/ppo'):
         super(ActorNetwork, self).__init__()
-        self.input_state = nn.Linear(input_state, 128)
-        self.layer1 = nn.Linear(128, 128)
-        self.action = nn.Linear(128, action_space)
 
+        self.actor = nn.Sequential(
+            nn.Linear(input_state, 128),
+            nn.ReLU(True),
+            nn.Linear(128,128),
+            nn.ReLU(True),
+            nn.Linear(128, action_space)
+            
+        )
+        
         self.optimizer = optim.Adam(self.parameters(), lr = alpha)
         self.checkpoint_file = os.path.join(chkpt_dir, 'actor_torvch_ppo')
+
+
     #neural network must have function for pytorch
     def forward(self, state):
-        x = F.relu(self.input_state(state))
-        x = F.relu(self.layer1(x))
-        x = F.tanh(self.action(x))
-        x = Categorical(x)
+        x = self.actor(state)
+
+        x = Categorical(F.sigmoid(x))
+        #print('actor categorical distribution')
+        #print(x)
         return x
     
+ 
+        
     def save(self):
         T.save(self.state_dict(), self.checkpoint_file)
     
+
     def load(self):
         self.load_state_dic(T.load(self.checkpoint_file))
    
@@ -37,21 +49,24 @@ class CriticNetwork(nn.Module):
     def __init__(self, input_dims, lr, chkpt_dir = 'tmp/ppo'):
         super(CriticNetwork,self).__init__()
 
-        self.critic = nn.Sequential
-        (
+        self.critic = nn.Sequential(
             nn.Linear(input_dims, 128),
-            nn.ReLU(),
+            nn.ReLU(True),
             nn.Linear(128,128),
-            nn.ReLU(),
-            nn.Linear(128, 1)
+            nn.ReLU(True),
+            nn.Linear(128, 1),
+            nn.ReLU(True)
         )
-        self.optimizer = optim.Adam(self.critic.parameters(), lr = lr)
+
+        self.optimizer = optim.Adam(self.parameters(), lr = lr)
         self.checkpoint_file = os.path.join(chkpt_dir, 'critic_torch_ppo')
 
     def forward(self, state):
         value = self.critic(state)
         return value
     
+
+
     def save(self):
         T.save(self.state_dict(), self.checkpoint_file)
     
@@ -101,34 +116,46 @@ class PPOTrainer:
         value = self.critic(obs)
         action = dist.sample()
 
+  
         probs = T.squeeze(dist.log_prob(action)).item()
+        probs = T.tensor([probs])
+
         action = T.squeeze(action).item()
-        #action = T.squeeze(action).item()
-        value = T.squeeze(value).item
+        action = T.tensor([action])
+
+        value = value.item()
+        value = T.tensor([value])
 
         return action, probs, value
     
 
     def get_shuffled_memory(self):
-        memory = np.random.shuffle(self.memory)
-        return memory
+
+        memory = random.shuffle(self.memory)
+       
     
     #basically state-value action, except it is a aggregate 
     def get_advantage(self,rewards, vals, dones):
 
-        #get batch
-        batch = self.select_batch()
+
         advantage = []
+
+     
         #get advantage
         for t in range(len(rewards)-1):
             discount = 1
             a_t = 0
             for k in range(t, len(rewards)-1):
+          
                  a_t += discount*(rewards[k] 
                                   + self.gamma*vals[k+1] * (1-int(dones[k])) 
                                   - vals[k])
                  discount *= self.gamma* self.gae_lambda
             advantage.append(a_t)
+        
+        #for the last element
+        adv = rewards[-1] - vals[-1]
+        advantage.append(adv)
 
         return advantage
     
@@ -173,29 +200,40 @@ class PPOTrainer:
 
     
     def batch_train(self):
-        
+        batches = []
         number_of_items = len(self.memory)
+        not_empty = True
         batch_size = math.floor(number_of_items / self.n_epochs) 
-        shuffled_memory = self.get_shuffled_memory()
+        if(batch_size == 0): batch_size = 1
+        
+
         #for each epoches
-        while(True):
-            if len(shuffled_memory) >= batch_size:
-                batch = shuffled_memory[0: batch_size]
-                shuffled_memory = shuffled_memory[batch_size:]
+        while(not_empty):
+            if len(self.memory) >= batch_size:
+                batches = self.memory[0: batch_size]
+                self.memory = self.memory[batch_size:]
             else:
-                batch = shuffled_memory
+                batches = self.memory
+                break
+
 
             #zip for better iteration
-            states, actions, rewards, dones, probs, vals = zip(*batch)
+            states, actions, rewards, dones, probs, vals = zip(*batches)
             
             
             #get advantage
             advantages = self.get_advantage(rewards, vals, dones)
 
-            
+            print('advanges')
+            print(advantages)
+
+            #print('reward')
+            #print(len(rewards))
+
+            #print(len(advantages))
             #do a training on every one of those samples 
-            for this_sample in range(batch):
-                print("training for " + str(this_sample) + "right now.\n")
+            for this_sample in range(len(batches)):
+                #print("training for " + str(this_sample) + "right now.\n")
                 self.train(states[this_sample],
                        actions[this_sample], 
                        rewards[this_sample], 
@@ -203,7 +241,7 @@ class PPOTrainer:
                        probs[this_sample],
                        vals[this_sample],
                        advantages[this_sample])
-          
+           
         #clear memory on the end of epoch
         self.clear_memory()
 
